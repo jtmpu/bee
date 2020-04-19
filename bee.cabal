@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 4a8c667afd88b80e93ce4f596ff807d718747cdb618efc77692e4e96b4adb65e
+-- hash: 7e4b5912d026ef9f64b68ce3485f614a48eea2355fb912bda9c251e45eb6159c
 
 name:           bee
 version:        0.1.0.0
@@ -28,10 +28,10 @@ source-repository head
 library
   exposed-modules:
       Bee.CLI.Commandline
-      Bee.CLI.Main
       Bee.Config
       Bee.Engine.Process
-      Bee.Persistence.Repository
+      Bee.Engine.Storage
+      Bee.Environment
       Bee.Time
   other-modules:
       Paths_bee
@@ -43,9 +43,12 @@ library
     , bytestring
     , directory
     , filepath
+    , mtl
+    , optparse-applicative
     , process
     , random
     , time
+    , unix
   default-language: Haskell2010
 
 executable bee
@@ -62,17 +65,20 @@ executable bee
     , bytestring
     , directory
     , filepath
+    , mtl
+    , optparse-applicative
     , process
     , random
     , time
+    , unix
   default-language: Haskell2010
 
-executable bee-data
+executable bee-hive
   main-is: Main.hs
   other-modules:
       Paths_bee
   hs-source-dirs:
-      bee-data-app
+      bee-hive-app
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       aeson
@@ -81,9 +87,12 @@ executable bee-data
     , bytestring
     , directory
     , filepath
+    , mtl
+    , optparse-applicative
     , process
     , random
     , time
+    , unix
   default-language: Haskell2010
 
 test-suite bee-test
@@ -101,7 +110,10 @@ test-suite bee-test
     , bytestring
     , directory
     , filepath
+    , mtl
+    , optparse-applicative
     , process
     , random
     , time
+    , unix
   default-language: Haskell2010

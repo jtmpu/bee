@@ -21,6 +21,8 @@ description:         Please see the README on GitHub at <https://github.com/gith
 
 dependencies:
 - base >= 4.7 && < 5
+- optparse-applicative
+- mtl
 - random
 - aeson
 - process
@@ -28,6 +30,7 @@ dependencies:
 - time
 - directory
 - filepath
+- unix
 
 library:
   source-dirs: src
@@ -42,9 +45,9 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - bee
-  bee-data:
+  bee-hive:
     main:                Main.hs
-    source-dirs:         bee-data-app
+    source-dirs:         bee-hive-app
     ghc-options:
     - -threaded
     - -rtsopts
