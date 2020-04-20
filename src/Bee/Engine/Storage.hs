@@ -5,6 +5,7 @@ module Bee.Engine.Storage (
     BeeStorageUnit (..),
     StorageUnitKey (..),
     allocateStorage,
+    getStorageKeys,
     allocateStorageUnit,
     getStorage,
     getStorageUnit,
@@ -14,10 +15,12 @@ module Bee.Engine.Storage (
     clearStorageUnit
 ) where
 
+import Control.Monad (filterM)
+import Control.Exception
 import Data.Aeson
 import GHC.Generics
 import System.IO
-import System.Directory
+import System.Directory (listDirectory, createDirectory, doesFileExist, copyFile, removeFile, doesDirectoryExist)
 import System.FilePath ((</>))
 import System.Random
 import qualified Data.ByteString as B
@@ -41,6 +44,9 @@ data BeeStorageUnit = BeeStorageUnit {
 
 data StorageUnitKey = Info | Status | Stdout | Stderr 
 
+data ConversionException = ConversionException deriving (Show)
+instance Exception ConversionException
+
 allocateStorage :: E.BeeEnvironment -> String -> IO BeeStorage
 allocateStorage env key = do
     ensureDirectoryExists root
@@ -53,8 +59,22 @@ allocateStorage env key = do
     where root = E.rootFolder env
           extension = E.fileExtension env
 
-getStorage :: E.BeeEnvironment -> String -> IO BeeStorage
-getStorage env key = return $ BeeStorage "" 0 "" 
+getStorageKeys :: E.BeeEnvironment -> IO [(String, String)]
+getStorageKeys env = do
+    programs <- listDirectory (rootFolder env) >>= filterM (\prog -> doesDirectoryExist (folder </> prog))
+    instances <- mapM (\prog -> listDirectory (folder </> prog)) programs
+    let a = zip programs instances
+    let b = map (\(prog, inst) -> [(prog, x) | x <- inst]) a
+    let keys = concat b
+    return keys
+    where folder = E.rootFolder env
+
+-- Returns the storage for the specified key-tuple (program, time)
+getStorage :: E.BeeEnvironment -> (String, String) -> IO BeeStorage
+getStorage env (program, time) = do
+    let timeInt = read time :: Int
+    return $ BeeStorage path timeInt (E.fileExtension env)
+    where path = E.rootFolder env </> program </> time
 
 allocateStorageUnit :: BeeStorage -> StorageUnitKey -> IO BeeStorageUnit 
 allocateStorageUnit store key = do
@@ -109,7 +129,7 @@ randomString count = do
 
 saveFiles :: FilePath -> BeeStorage -> IO ()
 saveFiles source target = do
-    files <- getDirectoryContents source
+    files <- listDirectory source
     move source target files
 
 move :: FilePath -> BeeStorage -> [FilePath] -> IO ()

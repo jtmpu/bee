@@ -4,7 +4,9 @@ import Options.Applicative
 import Data.Semigroup ((<>))
 
 import Control.Monad.Reader
-import Bee.Environment
+
+import qualified Bee.Environment as E
+import qualified Bee.Engine.Storage as S
 
 newtype Arguments = Arguments {
     optCommand :: Command
@@ -49,5 +51,6 @@ executeCommand Cat = putStrLn "data"
 executeCommand (List False (Just program)) = putStrLn program
 executeCommand (List False Nothing) = putStrLn ""
 executeCommand (List True _) = do
-    env <- mkDefaultBeeEnvironment
-    putStrLn "asd"
+    env <- E.mkDefaultBeeEnvironment
+    keys <- S.getStorageKeys env
+    putStrLn "done"

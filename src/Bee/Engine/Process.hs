@@ -55,7 +55,8 @@ data ProcessExecutionInfo = ProcessExecutionInfo {
     startTimestamp :: Int,
     endTimestamp :: Maybe Int,
     hasFinished :: Bool,
-    exitCode :: Maybe Int
+    exitCode :: Maybe Int,
+    aborted :: Bool
 } deriving (Show, Generic)
 instance FromJSON ProcessExecutionInfo
 instance ToJSON ProcessExecutionInfo
@@ -64,35 +65,35 @@ instance ToJSON ProcessExecutionInfo
 mkProcessExecutionInfo :: IO ProcessExecutionInfo
 mkProcessExecutionInfo = do
     timestamp <- T.getCurrentTimeAsInt
-    return $ ProcessExecutionInfo timestamp Nothing False Nothing
+    return $ ProcessExecutionInfo timestamp Nothing False Nothing False
 
-doneProcessExecutionInfo :: ProcessExecutionInfo -> Int -> IO ProcessExecutionInfo
-doneProcessExecutionInfo old ec = do
+doneProcessExecutionInfo :: ProcessExecutionInfo -> Int -> Bool -> IO ProcessExecutionInfo
+doneProcessExecutionInfo old ec aborted = do
     timestamp <- T.getCurrentTimeAsInt 
-    return $ ProcessExecutionInfo (startTimestamp old) (Just timestamp) True (Just ec) 
+    return $ ProcessExecutionInfo (startTimestamp old) (Just timestamp) True (Just ec) aborted
 
 termHandler :: MVar () -> Handler
-termHandler v = CatchOnce $ do
+termHandler exitSignal = CatchOnce $ do
     putStrLn "[!] Aborting, saving data."
-    putMVar v ()
+    putMVar exitSignal ()
 
 runCatch :: ProcessEnvironment -> IO ProcessExecutionInfo
 runCatch pe = do
-    v <- newEmptyMVar
-    installHandler sigTERM (termHandler v) Nothing
-    installHandler sigINT (termHandler v) Nothing
-    run pe v
+    exitSignal <- newEmptyMVar
+    installHandler sigTERM (termHandler exitSignal) Nothing
+    installHandler sigINT (termHandler exitSignal) Nothing
+    runAndMonitor pe exitSignal
 
-run :: ProcessEnvironment -> MVar () -> IO ProcessExecutionInfo
-run pe exitSignal = do
+runAndMonitor :: ProcessEnvironment -> MVar () -> IO ProcessExecutionInfo
+runAndMonitor pe exitSignal = do
     -- save process info
     suProcessEnv <- S.allocateStorageUnit store S.Info
     S.writeTo suProcessEnv (LBS.toStrict . encode $ pe)
     -- create monitor callbacks
     suStdout <- S.allocateStorageUnit store S.Stdout
-    let monitorOut = monitorCallback suStdout
+    let monitorOut d = B.hPutStr stdout d >> S.writeTo suStdout d
     suStderr <- S.allocateStorageUnit store S.Stderr
-    let monitorErr = monitorCallback suStderr
+    let monitorErr d = B.hPutStr stderr d >> S.writeTo suStderr d
     -- save process status
     ei <- mkProcessExecutionInfo
     suInfo <- S.allocateStorageUnit store S.Status
@@ -104,7 +105,7 @@ run pe exitSignal = do
         std_out = CreatePipe,
         std_err = CreatePipe,
         cwd = workingDirectory }
-    exitCode <- monitor exitSignal hproc hout herr monitorOut monitorErr
+    (exitCode, aborted) <- monitor exitSignal hproc hout herr monitorOut monitorErr
     -- update and save status, and generated files if applicable
     when shouldGather $
         case workingDirectory of
@@ -112,10 +113,10 @@ run pe exitSignal = do
     S.clearStorageUnit suInfo
     case exitCode of
         ExitSuccess -> do
-            doneInfo <- doneProcessExecutionInfo ei 0
+            doneInfo <- doneProcessExecutionInfo ei 0 aborted
             S.writeTo suInfo (LBS.toStrict . encode $ doneInfo)
         ExitFailure val -> do
-            doneInfo <- doneProcessExecutionInfo ei val
+            doneInfo <- doneProcessExecutionInfo ei val aborted
             S.writeTo suInfo (LBS.toStrict . encode $ doneInfo)
 
     return ei
@@ -125,19 +126,23 @@ run pe exitSignal = do
         store = processStorage pe
         shouldGather = gatherOuput pe
 
+-- If gatherOutput is specified, creates a new random working directory
 getWorkingDirectory :: Bool -> IO (Maybe FilePath)
 getWorkingDirectory True = Just <$> S.createRandomFolder
 getWorkingDirectory False = return Nothing
 
-monitor :: MVar () -> ProcessHandle -> Handle -> Handle -> (B.ByteString -> IO B.ByteString) -> (B.ByteString -> IO B.ByteString) -> IO ExitCode
+-- Continously gathers data until and exit signal or the program exits
+monitor :: MVar () -> ProcessHandle -> Handle -> Handle -> (B.ByteString -> IO ()) -> (B.ByteString -> IO ()) -> IO (ExitCode, Bool)
 monitor exitSignal hProc hOut hErr callbackOut callbackErr = do
+    -- Avoids consuming 100% cpu resource through thread delay
+    threadDelay 10000
     outbs <- B.hGetNonBlocking hOut (64 * 1024)
     errbs <- B.hGetNonBlocking hErr (64 * 1024)
     callbackOut outbs
     callbackErr errbs
     val <- tryTakeMVar exitSignal
     case val of
-        Just _ -> return $ ExitFailure 1
+        Just _ -> return (ExitFailure 1, True)
         Nothing -> do
             s <- getProcessExitCode hProc
             case s of
@@ -147,17 +152,4 @@ monitor exitSignal hProc hOut hErr callbackOut callbackErr = do
                     errlast <- B.hGetContents hErr
                     callbackOut outlast
                     callbackErr errlast
-                    return ec
-
-monitorCallback :: S.BeeStorageUnit -> B.ByteString -> IO B.ByteString
-monitorCallback storage value = writeToStorage storage value >>= writeToStdout
-
-writeToStdout :: B.ByteString -> IO B.ByteString
-writeToStdout value = do
-    B.putStr value
-    return value
-
-writeToStorage :: S.BeeStorageUnit -> B.ByteString -> IO B.ByteString
-writeToStorage store value = do
-    S.writeTo store value
-    return value
+                    return (ec, False)
