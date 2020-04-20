@@ -78,12 +78,12 @@ user@hdev:~$ bee-hive list -a -d
 ```
 
 ```
-user@hdev:~$ bee-hive cat -i 0 --output
+user@hdev:~$ bee-hive cat -i 1 --output
 user@server:~$ whoami
 user
 user@server:~$ 
 
-user@hdev:~$ bee-hive cat -i 0 --details | jq '.'
+user@hdev:~$ bee-hive cat -i 1 --details | jq '.'
 {
   "processInfo": {
     "arguments": [
@@ -100,7 +100,7 @@ user@hdev:~$ bee-hive cat -i 0 --details | jq '.'
   }
 }
 
-user@hdev:~$ bee-hive cat -i 0 --status | jq '.'
+user@hdev:~$ bee-hive cat -i 1 --status | jq '.'
 {
   "hasFinished": true,
   "endTimestamp": 1587390522,
