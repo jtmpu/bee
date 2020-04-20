@@ -2,7 +2,12 @@
 
 module Bee.Engine.Process (
     mkProcessEnvironment,
-    runCatch
+    loadProcessEnvironment,
+    loadProcessExecutionInfo,
+    ProcessEnvironment(..),
+    ProcessExecutionInfo(..),
+    ProcessInfo(..),
+    runCatch,
 ) where
 
 import Bee.Environment as E
@@ -51,6 +56,9 @@ mkProcessEnvironment env vals gather = do
     return $ ProcessEnvironment info storage gather
     where info = mkProcessInfo vals
 
+loadProcessEnvironment :: B.ByteString -> Maybe ProcessEnvironment
+loadProcessEnvironment = decode . LBS.fromStrict 
+
 data ProcessExecutionInfo = ProcessExecutionInfo {
     startTimestamp :: Int,
     endTimestamp :: Maybe Int,
@@ -71,6 +79,9 @@ doneProcessExecutionInfo :: ProcessExecutionInfo -> Int -> Bool -> IO ProcessExe
 doneProcessExecutionInfo old ec aborted = do
     timestamp <- T.getCurrentTimeAsInt 
     return $ ProcessExecutionInfo (startTimestamp old) (Just timestamp) True (Just ec) aborted
+
+loadProcessExecutionInfo :: B.ByteString -> Maybe ProcessExecutionInfo
+loadProcessExecutionInfo = decode . LBS.fromStrict
 
 termHandler :: MVar () -> Handler
 termHandler exitSignal = CatchOnce $ do

@@ -6,10 +6,12 @@ module Bee.Engine.Storage (
     StorageUnitKey (..),
     allocateStorage,
     getStorageKeys,
-    allocateStorageUnit,
     getStorage,
+    allocateStorageUnit,
     getStorageUnit,
+    getStorageUnits,
     writeTo,
+    readFrom,
     createRandomFolder,
     saveFiles,
     clearStorageUnit
@@ -23,6 +25,7 @@ import System.IO
 import System.Directory (listDirectory, createDirectory, doesFileExist, copyFile, removeFile, doesDirectoryExist)
 import System.FilePath ((</>))
 import System.Random
+import Text.Read (readMaybe)
 import qualified Data.ByteString as B
 
 import Bee.Time as T
@@ -71,9 +74,11 @@ getStorageKeys env = do
 
 -- Returns the storage for the specified key-tuple (program, time)
 getStorage :: E.BeeEnvironment -> (String, String) -> IO BeeStorage
-getStorage env (program, time) = do
-    let timeInt = read time :: Int
-    return $ BeeStorage path timeInt (E.fileExtension env)
+getStorage env (program, time) =
+    -- TODO: Safe parse
+    case readMaybe time :: Maybe Int of
+        Just val -> return $ BeeStorage path val (E.fileExtension env)
+        Nothing -> return $ BeeStorage path 0 (E.fileExtension env)
     where path = E.rootFolder env </> program </> time
 
 allocateStorageUnit :: BeeStorage -> StorageUnitKey -> IO BeeStorageUnit 
@@ -85,8 +90,14 @@ allocateStorageUnit store key = do
 openStorageUnit :: BeeStorage -> StorageUnitKey -> IO BeeStorageUnit
 openStorageUnit store key = undefined
 
-getStorageUnit :: BeeStorage -> StorageUnitKey -> IO BeeStorageUnit
-getStorageUnit store key = undefined
+getStorageUnit :: BeeStorage -> StorageUnitKey -> BeeStorageUnit
+getStorageUnit store key = BeeStorageUnit path Nothing
+    where path = getUnitPath store key
+
+getStorageUnits :: BeeStorage -> IO [BeeStorageUnit]
+getStorageUnits store = do
+    files <- listDirectory (directory store) >>= filterM (\x -> doesFileExist (directory store </> x))
+    return $ map (\x -> BeeStorageUnit (directory store </> x) Nothing) files
 
 getUnitPath :: BeeStorage -> StorageUnitKey -> FilePath
 getUnitPath bs Stdout =  directory bs </> ("stdout." ++ extension bs) 
@@ -101,6 +112,11 @@ writeTo unit d = case maybeHandle unit of
         B.hPutStr h d
         hClose h
     Just handle -> B.hPutStr handle d
+
+readFrom :: BeeStorageUnit -> IO B.ByteString
+readFrom unit = case maybeHandle unit of
+    Nothing -> B.readFile (path unit)
+    Just h -> B.hGetContents h
 
 clearStorageUnit :: BeeStorageUnit -> IO ()
 clearStorageUnit unit = writeFile (path unit) ""

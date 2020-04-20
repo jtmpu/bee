@@ -1,18 +1,33 @@
 module Main where
 
 import Options.Applicative
+import Data.List
 import Data.Semigroup ((<>))
+import System.IO
 
 import Control.Monad.Reader
 
 import qualified Bee.Environment as E
+import qualified Bee.Time as T
 import qualified Bee.Engine.Storage as S
+import qualified Bee.Engine.Process as P
 
 newtype Arguments = Arguments {
     optCommand :: Command
 }
 
-data Command = List Bool (Maybe String) | Cat
+data Command = List {
+    listAll :: Bool,
+    listProgram :: Maybe String,
+    showDetails :: Bool
+ }
+ | Cat {
+    executionIndex :: Int,
+    catOutput :: Bool,
+    catError :: Bool,
+    catInfo :: Bool,
+    catStatus :: Bool    
+ }
 
 main :: IO ()
 main = do
@@ -32,25 +47,122 @@ main = do
         programOptions =
             Arguments <$> hsubparser (listCommand <> catCommand)
         listCommand :: Mod CommandFields Command
-        listCommand = 
+        listCommand =
             command
                 "list"
                 (info listOptions (progDesc "List executed commands"))
         listOptions :: Parser Command
         listOptions =
-            List <$> switch (short 'a' <> long "all" <> help "List all commands") 
+            List <$> switch (short 'a' <> long "all" <> help "List all commands")
                  <*> optional (strOption (short 'p' <> long "program" <> help "List all executions for a program"))
+                 <*> switch (short 'd' <> long "details" <> help "Show detailed information about executed programs")
         catCommand :: Mod CommandFields Command
         catCommand =
             command
                 "cat"
-                (info (pure Cat) (progDesc "Get information from a command execution"))
+                (info catOptions (progDesc "Get information from a command execution"))
+        catOptions :: Parser Command
+        catOptions = 
+            Cat <$> option auto ( short 'i' <> long "index" <> help "Index of execution to get information about" <> value (-1) <> metavar "INT")
+                <*> switch (short 'o' <> long "output" <> help "Cat STDOUT of execution")
+                <*> switch (short 'e' <> long "error" <> help "Cat STDERR of execution")
+                <*> switch (short 'd' <> long "details" <> help "Cat info of execution")
+                <*> switch (short 's' <> long "status" <> help "Cat status of execution")
 
 executeCommand :: Command -> IO ()
-executeCommand Cat = putStrLn "data"
-executeCommand (List False (Just program)) = putStrLn program
-executeCommand (List False Nothing) = putStrLn ""
-executeCommand (List True _) = do
+executeCommand (Cat index showOut showErr showInfo showStatus) = do
+    env <- E.mkDefaultBeeEnvironment 
+    keys <- S.getStorageKeys env
+    if length keys <= index 
+        then putStrLn $ "[!] Index out of range (0-" ++ show (length keys - 1) ++ ")"
+        else do
+            let key = keys !! index
+            store <- S.getStorage env key
+            when showOut $ do
+                let unit = S.getStorageUnit store S.Stdout
+                d <- readFile $ S.path unit
+                putStr d
+            when showErr $ do
+                let unit = S.getStorageUnit store S.Stderr
+                d <- readFile $ S.path unit
+                putStr d
+            when showInfo $ do
+                let unit = S.getStorageUnit store S.Info
+                d <- readFile $ S.path unit
+                putStr d
+            when showStatus $ do
+                let unit = S.getStorageUnit store S.Status
+                d <- readFile $ S.path unit
+                putStr d
+executeCommand (List False Nothing _) = putStrLn "[!] Expecting -a/--all or -p/--program"
+executeCommand (List False (Just program) detailed) = do
+    env <- E.mkDefaultBeeEnvironment 
+    keys <- S.getStorageKeys env
+    let filtered = filter (\(k, v) -> k == program) keys
+    let sorted = quickSort filtered
+    let index_keys = keysWithIndex 0 sorted
+    mapM_ (\(index, kv) -> printInstance env detailed index kv) index_keys
+executeCommand (List True _ detailed) = do
     env <- E.mkDefaultBeeEnvironment
     keys <- S.getStorageKeys env
-    putStrLn "done"
+    let sorted = quickSort keys
+    let index_keys = keysWithIndex 0 sorted
+    mapM_ (\(index, kv) -> printInstance env detailed index kv) index_keys
+
+keysWithIndex :: Int -> [a] -> [(Int, a)]
+keysWithIndex _ [] = []
+keysWithIndex start [x] = [(start, x)]
+keysWithIndex start (x:xs) = (start, x) : keysWithIndex (start + 1) xs
+
+printInstance :: E.BeeEnvironment -> Bool -> Int -> (String, String) -> IO ()
+printInstance env detailed index key = do
+    store <- S.getStorage env key
+    processEnvData <- S.readFrom (S.getStorageUnit store S.Info )
+    case P.loadProcessEnvironment processEnvData of
+        Just env -> do
+            execInfoData <- S.readFrom (S.getStorageUnit store S.Status)
+            case P.loadProcessExecutionInfo execInfoData of
+                Just execInfo -> if detailed 
+                    then printInstanceDetailed index env execInfo
+                    else printInstanceSimple index env execInfo
+                Nothing -> hPutStr stderr "[!] Failed to load process execution info."
+        Nothing -> hPutStr stderr "[!] Failed to load process environment data."
+
+printInstanceSimple ::  Int -> P.ProcessEnvironment -> P.ProcessExecutionInfo -> IO ()
+printInstanceSimple index env info = do
+    let prog = P.program (P.processInfo env)
+    let args = unwords (P.arguments (P.processInfo env))
+    let startTime = T.convertIntTimeToStr (P.startTimestamp info)
+    let endTime = getEndTime (P.endTimestamp info)
+    putStrLn (show index ++ ". " ++ startTime ++ " -> " ++ endTime ++ "\t" ++ prog ++ " " ++ args)
+
+printInstanceDetailed :: Int -> P.ProcessEnvironment -> P.ProcessExecutionInfo -> IO ()
+printInstanceDetailed index env info = do
+    let prog = P.program (P.processInfo env)
+    let args = unwords (P.arguments (P.processInfo env))
+    let startTime = T.convertIntTimeToStr (P.startTimestamp info)
+    let endTime = getEndTime (P.endTimestamp info)
+    let store = P.processStorage env
+    putStrLn (show index ++ ". " ++ prog)
+    putStrLn $ "  - Command     : " ++ prog ++ " " ++ args
+    putStrLn $ "  - Start       : " ++ startTime
+    putStrLn $ "  - End         : " ++ endTime
+    putStrLn $ "  - GatherOutput: " ++ show (P.gatherOuput env)
+    putStrLn $ "  - HasFinished : " ++ show (P.hasFinished info)
+    putStrLn $ "  - Aborted     : " ++ show (P.aborted info)
+    putStrLn $ "  - ExitCode    : " ++ show (P.exitCode info)
+    putStrLn   "  - Files       : "
+    units <- S.getStorageUnits store
+    mapM_ (putStrLn . \x -> "    - " ++ S.path x) units
+
+
+getEndTime :: Maybe Int -> String
+getEndTime (Just ts) = T.convertIntTimeToStr ts
+getEndTime Nothing = "0000-00-00 00:00:00"
+
+quickSort :: [(String, String)] -> [(String, String)]
+quickSort [] = []
+quickSort [x] = [x]
+quickSort (x:arrLeft) = smallerOnes ++ [x] ++ largerOnes
+    where smallerOnes = quickSort [ele | ele <- arrLeft, snd ele <= snd x]
+          largerOnes = quickSort [ele | ele <- arrLeft, snd ele > snd x]
