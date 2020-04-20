@@ -73,10 +73,11 @@ executeCommand :: Command -> IO ()
 executeCommand (Cat index showOut showErr showInfo showStatus) = do
     env <- E.mkDefaultBeeEnvironment 
     keys <- S.getStorageKeys env
-    if length keys <= index 
-        then putStrLn $ "[!] Index out of range (0-" ++ show (length keys - 1) ++ ")"
+    let sorted = quickSort keys
+    if length sorted <= index 
+        then putStrLn $ "[!] Index out of range (0-" ++ show (length sorted - 1) ++ ")"
         else do
-            let key = keys !! index
+            let key = sorted !! index
             store <- S.getStorage env key
             when showOut $ do
                 let unit = S.getStorageUnit store S.Stdout
